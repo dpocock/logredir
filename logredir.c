@@ -1,6 +1,21 @@
+
+#define __ASSUME_SOCK_CLOEXEC
+
+#define __GNU_SOURCE
+
+#define __GNUC_GNU_INLINE__
+
+#define __extern_inline inline
+
+
+
+
+
 /*
  * Copyright (c) 1983, 1988, 1993
  *	The Regents of the University of California.  All rights reserved.
+ *
+ * Copyright (C) 2012, Daniel Pocock http://danielpocock.com
  *
  * Redistribution and use in source and binary forms, with or without
  * modification, are permitted provided that the following conditions
@@ -53,12 +68,36 @@ static char sccsid[] = "@(#)syslog.c	8.4 (Berkeley) 3/18/94";
 
 #include <stdarg.h>
 
-#include <libio/iolibio.h>
-#include <math_ldbl_opt.h>
-
-#include <kernel-features.h>
-
 #define ftell(s) _IO_ftell (s)
+
+#ifndef __set_errno
+#define __set_errno(val) (errno = (val))
+#endif
+
+#ifndef __localtime_r
+#define __localtime_r(timep, result) localtime_r(timep, result)
+#endif
+
+#ifndef _nl_C_locobj_ptr
+#define _nl_C_locobj_ptr newlocale(0, "C", NULL)
+#endif
+
+#ifndef __writev
+#define __writev(fd, iov, iovcnt) writev(fd, iov, iovcnt)
+#endif
+
+#ifndef __socket
+#define __socket(domain, type, protocol) socket(domain, type, protocol)
+#endif
+
+void
+__libc_cleanup_routine (struct __pthread_cleanup_frame *f)
+{
+	if (f->__do_it)
+		f->__cancel_routine (f->__cancel_arg);
+}
+
+#define LOG_VAR "SYSLOG_SOCKET"
 
 static int	LogType = SOCK_DGRAM;	/* type of socket connection */
 static int	LogFile = -1;		/* fd for log */
@@ -70,9 +109,9 @@ static int	LogMask = 0xff;		/* mask of priorities to be logged */
 extern char	*__progname;		/* Program name, from crt0. */
 
 /* Define the lock.  */
-__libc_lock_define_initialized (static, syslog_lock)
+static pthread_mutex_t syslog_lock = PTHREAD_MUTEX_INITIALIZER;
 
-static void openlog_internal(const char *, int, int) internal_function;
+static void openlog_internal(const char *, int, int);
 static void closelog_internal(void);
 #ifndef NO_SIGPIPE
 static void sigpipe_handler (int);
@@ -109,7 +148,7 @@ cancel_handler (void *ptr)
  *	print message on log file; output is intended for syslogd(8).
  */
 void
-__syslog(int pri, const char *fmt, ...)
+syslog(int pri, const char *fmt, ...)
 {
 	va_list ap;
 
@@ -117,8 +156,6 @@ __syslog(int pri, const char *fmt, ...)
 	__vsyslog_chk(pri, -1, fmt, ap);
 	va_end(ap);
 }
-ldbl_hidden_def (__syslog, syslog)
-ldbl_strong_alias (__syslog, syslog)
 
 void
 __syslog_chk(int pri, int flag, const char *fmt, ...)
@@ -316,23 +353,22 @@ __vsyslog_chk(int pri, int flag, const char *fmt, va_list ap)
 	if (buf != failbuf)
 		free (buf);
 }
-libc_hidden_def (__vsyslog_chk)
 
 void
 __vsyslog(int pri, const char *fmt, va_list ap)
 {
   __vsyslog_chk (pri, -1, fmt, ap);
 }
-ldbl_hidden_def (__vsyslog, vsyslog)
-ldbl_strong_alias (__vsyslog, vsyslog)
 
 static struct sockaddr_un SyslogAddr;	/* AF_UNIX address of local logger */
 
 
 static void
-internal_function
 openlog_internal(const char *ident, int logstat, int logfac)
 {
+	char *_path=getenv(LOG_VAR);
+	if(_path==NULL)
+		_path=_PATH_LOG;
 	if (ident != NULL)
 		LogTag = ident;
 	LogStat = logstat;
@@ -343,7 +379,7 @@ openlog_internal(const char *ident, int logstat, int logfac)
 	while (retry < 2) {
 		if (LogFile == -1) {
 			SyslogAddr.sun_family = AF_UNIX;
-			(void)strncpy(SyslogAddr.sun_path, _PATH_LOG,
+			(void)strncpy(SyslogAddr.sun_path, _path,
 				      sizeof(SyslogAddr.sun_path));
 			if (LogStat & LOG_NDELAY) {
 #ifdef SOCK_CLOEXEC

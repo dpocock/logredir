@@ -1,0 +1,23 @@
+#!/bin/bash -e
+
+# This script uses logger(1) to send a log message using the
+# syslog API, it will be delivered by logredir using the
+# custom socket name specified in the SYSLOG_SOCKET
+# environment variable.
+
+# Before running the script, create the test socket.
+# For example, an rsyslog process normally listens to /dev/log
+# but it can listen to any socket specified in the rsyslog.conf file:
+#
+#    $SystemLogSocketName /tmp/test-log
+#
+# To test without configuring and running a syslog instance, it
+# is possible to use the socat utility:
+#
+#    socat UNIX-LISTEN:/tmp/test-log -
+#
+
+SYSLOG_SOCKET=/tmp/test-log \
+LD_PRELOAD=./logredir.so \
+  logger -p USER.ERR "Hello world!"
+
